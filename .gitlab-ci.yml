@@ -1,0 +1,86 @@
+# Name the pipeline
+workflow:
+  name: export_aops_content
+  # Define when and how the pipeline runs
+  rules:
+    # Don't create a pipeline for commits
+    - if: $CI_PIPELINE_SOURCE == "push"
+      when: never
+    # Allow scheduled runs
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    # Allow manual runs
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# Set default image and runner tags for all jobs
+default:
+  image: $CI_PIPELINE_CONTAINER
+  tags:
+    - $CI_GITLAB_RUNNER
+
+# Common job parameters used by all scripts
+.common_job_parameters:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: on_success
+    - when: manual
+
+variables:
+  # AriaOps settings 
+  AriaOpsURL:        "${CI_AOPS_URI}"
+  AuthSource:        "${AUTH_SOURCE}"
+  DownloadPath:      "${DOWNLOAD_PATH}"
+  RetentionDays:     "${RETENTION_DAYS}"
+  LogFile:           "${LOG_FILE}"
+  # Vault settings
+  VaultAddr:         "${VAULT_ADDR}"
+  RoleId:            "${VAULT_ROLE_ID}"
+  SecretId:          "${VAULT_SECRET_ID}"
+  VaultPath:         "${VAULT_PATH}"
+  SftpServer:        "${SFTP_SERVER}"
+  SftpPort:          "${SFTP_PORT}"
+  RemotePath:        "${SFTP_PATH}"
+  VaultPathSftp:     "${VAULT_PATH_SFTP}"
+  JWT_TOKEN:         "${CI_JOB_JWT}"
+
+# Define the stages
+stages:
+  - export
+
+#### stage: export_ariaops_content ######################################################
+
+export_ariaops_content:
+  stage: export
+  extends: .common_job_parameters
+  # Get from parallel matrix
+  environment: $ENVIRONMENT
+  script:
+    # Run the PowerShell export script with all required parameters
+    - mkdir -p tmp_backup_files tmp_output_files
+    - pwsh -command '$PSVersionTable | Format-Table -AutoSize'
+    - echo "Pipeline started at $(date)" > tmp_output_files/ariaops-export.log
+    - >
+      pwsh -NoLogo -NoProfile -File ./aops-content-export.ps1
+      -AriaOpsURL    "$AriaOpsURL"
+      -AuthSource    "$AuthSource"
+      -DownloadPath  "$DownloadPath"
+      -RetentionDays $RetentionDays
+      -LogFile       "$LogFile"
+      -VaultAddr     "$VaultAddr"
+      -RoleId        "$RoleId"
+      -SecretId      "$SecretId"
+      -VaultPath     "$VaultPath"
+  when : manual
+
+  # Always persist the artifacts so you can download backups from the job page
+  artifacts:
+    # In case a single Aria Ops fails still capture other artifacts
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - "$DownloadPath/*.zip"
+      - "$LogFile"
+
+  parallel:
+    matrix:
+      - ENVIRONMENT: env1
+      - ENVIRONMENT: env2
